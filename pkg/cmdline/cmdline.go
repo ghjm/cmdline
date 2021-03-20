@@ -253,7 +253,7 @@ func (cl *Cmdline) ShowHelp() error {
 	err = multiPrintf(cl.out,
 		mPI("Usage: %s [--<action> [<param>=<value> ...] ...]\n\n", progname),
 		mPI("   --help: Show this help\n\n"),
-		mPI("   --config <filename>: Load additional config options from a file\n\n"))
+		mPI("   --config <filename>: Load additional config options from a YAML file\n\n"))
 	if err != nil {
 		return err
 	}
@@ -694,15 +694,36 @@ func (cl *Cmdline) loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
 	return cfgObjs, nil
 }
 
+// parseAndRunOptions is the configuration struct for ParseAndRun
+type parseAndRunOptions struct {
+	helpIfNoArgs bool
+}
+
+// ShowHelpIfNoArgs means that if the user provides no arguments, print the help instead of doing anything
+func ShowHelpIfNoArgs(pro *parseAndRunOptions) {
+	pro.helpIfNoArgs = true
+}
+
 // ParseAndRun parses the command line configuration and runs the selected actions.  Phases is a list of function
 // names that will be called on each config objects.  If some objects need to be configured before others, use
 // multiple phases.  Each phase is run against all objects before moving to the next phase.  The return value is
 // the name of the exclusive object that was run, if any, or an empty string if the normal, non-exclusive command ran.
-func (cl *Cmdline) ParseAndRun(args []string, phases []string) (string, error) {
+func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*parseAndRunOptions)) (string, error) {
+
+	pro := parseAndRunOptions{}
+	for _, proFunc := range options {
+		proFunc(&pro)
+	}
+
+	if len(args) == 0 && pro.helpIfNoArgs {
+		return "", cl.ShowHelp()
+	}
+
 	var accumulator *cfgObjInfo
 	var commandType reflect.Type
 	var requiredParams map[string]bool
 	var err error
+
 	requiredObjs := make(map[string]bool)
 	activeObjs := make([]*cfgObjInfo, 0)
 	configCmd := false
