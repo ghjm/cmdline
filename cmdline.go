@@ -68,11 +68,26 @@ type Cmdline struct {
 }
 
 // NewCmdline constructs a new cmdline object
-func NewCmdline(out io.Writer) *Cmdline {
+func NewCmdline() *Cmdline {
 	cl := &Cmdline{
-		out: out,
+		out: os.Stdout,
 	}
 	return cl
+}
+
+// SetOutput configures where the output of a Cmdline instance will go
+func (cl *Cmdline) SetOutput(out io.Writer) {
+	cl.out = out
+}
+
+var globalCmdline *Cmdline
+
+// GlobalInstance returns a singleton global instance of a Cmdline
+func GlobalInstance() *Cmdline {
+	if globalCmdline == nil {
+		globalCmdline = NewCmdline()
+	}
+	return globalCmdline
 }
 
 // AddConfigType registers a new config type with the system
