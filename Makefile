@@ -12,3 +12,9 @@ fmt: format
 pre-commit:
 	@pre-commit run --all-files
 
+example: cmd/example.go pkg/cmdline/cmdline.go
+	@go build cmd/example.go
+
+clean:
+	@rm -f example
+
