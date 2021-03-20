@@ -685,7 +685,10 @@ func (cl *Cmdline) loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
 			coi.fieldsSet = append(coi.fieldsSet, k)
 			delete(requiredParams, strings.ToLower(k))
 		}
-		checkRequiredParams(requiredParams, command)
+		err = checkRequiredParams(requiredParams, command)
+		if err != nil {
+			return nil, err
+		}
 		cfgObjs = append(cfgObjs, coi)
 	}
 	return cfgObjs, nil
