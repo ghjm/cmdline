@@ -1011,7 +1011,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 	for _, phase := range phases {
 		err = runMethod(phase)
 		if err != nil {
-			return fmt.Errorf("error during %s phase: %s", phase, err)
+			return err
 		}
 	}
 
