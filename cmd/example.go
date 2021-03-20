@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/ghjm/cmdline/pkg/cmdline"
+	"github.com/ghjm/cmdline"
 	"os"
 )
 
