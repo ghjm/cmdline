@@ -737,7 +737,12 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 	}
 
 	if len(args) == 0 && pro.helpIfNoArgs {
-		return cl.ShowHelp()
+		err := cl.ShowHelp()
+		if err != nil {
+			return err
+		}
+		cl.whatRan = "help"
+		return nil
 	}
 
 	var accumulator *cfgObjInfo
@@ -764,12 +769,14 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 			if err != nil {
 				return err
 			}
+			cl.whatRan = "help"
 			return nil
 		} else if lcarg == "--bash-completion" && cl.out != nil {
 			err = cl.BashCompletion()
 			if err != nil {
 				return err
 			}
+			cl.whatRan = "bash-completion"
 			return nil
 		} else if lcarg[0] == '-' {
 			// This is a param with dashes, which starts a new action
