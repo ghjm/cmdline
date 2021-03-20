@@ -37,7 +37,7 @@ func (r rectangle) Check() error {
 }
 
 func (r rectangle) Draw() error {
-	fmt.Printf("Drawing a rectangle of height %f and width %f\n", r.Height, r.Width)
+	fmt.Printf("Drawing a %s rectangle of height %f and width %f\n", r.Color, r.Height, r.Width)
 	return nil
 }
 
