@@ -13,6 +13,8 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-python@v2
       - uses: actions/setup-go@v2
+      - name: Install golint
+        run: go get -u golang.org/x/lint/golint
       - uses: pre-commit/action@v2.0.0
   test:
     strategy:
