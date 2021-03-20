@@ -27,7 +27,7 @@ func (cfg testPhasesCfg) Run() error {
 }
 
 func TestCmdlinePhases(t *testing.T) {
-	cl := NewCmdline(nil)
+	cl := NewCmdline()
 	cl.AddConfigType("PhaseTest", "Phase Test", testPhasesCfg{})
 	testResults = make([]string, 0)
 	_, err := cl.ParseAndRun([]string{"--PhaseTest", "ID=test1", "--PhaseTest", "ID=test2"}, []string{"Init", "Prepare", "Run"})
