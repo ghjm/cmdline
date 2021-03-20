@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"gopkg.in/yaml.v2"
+	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -60,10 +61,22 @@ func Section(section *ConfigSection) func(param *ConfigType) {
 	}
 }
 
-var configTypes []*ConfigType
+// Cmdline is a command-line processor object
+type Cmdline struct {
+	configTypes []*ConfigType
+	out         io.Writer
+}
+
+// NewCmdline constructs a new cmdline object
+func NewCmdline(out io.Writer) *Cmdline {
+	cl := &Cmdline{
+		out: out,
+	}
+	return cl
+}
 
 // AddConfigType registers a new config type with the system
-func AddConfigType(name string, description string, configType interface{}, options ...func(*ConfigType)) {
+func (cl *Cmdline) AddConfigType(name string, description string, configType interface{}, options ...func(*ConfigType)) {
 	newCT := &ConfigType{
 		name:        name,
 		description: description,
@@ -72,7 +85,7 @@ func AddConfigType(name string, description string, configType interface{}, opti
 	for _, opt := range options {
 		opt(newCT)
 	}
-	configTypes = append(configTypes, newCT)
+	cl.configTypes = append(cl.configTypes, newCT)
 }
 
 func printableTypeName(typ reflect.Type) string {
@@ -116,27 +129,47 @@ func enumerateFields(typ reflect.Type) <-chan reflect.StructField {
 	return results
 }
 
-func printCmdHelp(p *ConfigType) {
+func (cl *Cmdline) printCmdHelp(p *ConfigType) error {
 	if p.hidden {
-		return
+		return nil
 	}
-	fmt.Printf("   --%s", strings.ToLower(p.name))
+	var err error
+	_, err = fmt.Fprintf(cl.out, "   --%s", strings.ToLower(p.name))
+	if err != nil {
+		return err
+	}
 	if p.description != "" {
-		fmt.Printf(": %s", p.description)
+		_, err = fmt.Fprintf(cl.out, ": %s", p.description)
+		if err != nil {
+			return err
+		}
 	}
 	if p.required {
-		fmt.Printf(" (required)")
+		_, err = fmt.Fprintf(cl.out, " (required)")
+		if err != nil {
+			return err
+		}
 	}
-	fmt.Printf("\n")
+	_, err = fmt.Fprintf(cl.out, "\n")
+	if err != nil {
+		return err
+	}
 	for ctf := range enumerateFields(p.objType) {
-		fmt.Printf("      %s=<%s>", strings.ToLower(ctf.Name),
+		_, err = fmt.Fprintf(cl.out, "      %s=<%s>", strings.ToLower(ctf.Name),
 			printableTypeName(ctf.Type))
+		if err != nil {
+			return err
+		}
 		descr := ctf.Tag.Get("description")
 		if descr != "" {
-			fmt.Printf(": %s", descr)
+			_, err = fmt.Fprintf(cl.out, ": %s", descr)
+			if err != nil {
+				return err
+			}
 		}
 		extras := make([]string, 0)
-		req, err := betterParseBool(ctf.Tag.Get("required"))
+		var req bool
+		req, err = betterParseBool(ctf.Tag.Get("required"))
 		if err == nil && req {
 			extras = append(extras, "required")
 		}
@@ -145,24 +178,57 @@ func printCmdHelp(p *ConfigType) {
 			extras = append(extras, fmt.Sprintf("default: %s", def))
 		}
 		if len(extras) > 0 {
-			fmt.Printf(" (%s)", strings.Join(extras, ", "))
+			_, err = fmt.Fprintf(cl.out, " (%s)", strings.Join(extras, ", "))
+			if err != nil {
+				return err
+			}
 		}
-		fmt.Printf("\n")
+		_, err = fmt.Fprintf(cl.out, "\n")
+		if err != nil {
+			return err
+		}
 	}
-	fmt.Printf("\n")
+	_, err = fmt.Fprintf(cl.out, "\n")
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-// ShowHelp prints command line help.  It does NOT exit.
-func ShowHelp() {
+type multiPrintfItem struct {
+	format string
+	values []interface{}
+}
 
+// mPI is a convenience function for constructing multiPrintfItems more laconically
+func mPI(format string, values ...interface{}) *multiPrintfItem {
+	return &multiPrintfItem{
+		format: format,
+		values: values,
+	}
+}
+
+// multiPrintf calls fmt.Fprintf on multiple items, until there is an error
+func multiPrintf(out io.Writer, items ...*multiPrintfItem) error {
+	for _, item := range items {
+		_, err := fmt.Fprintf(out, item.format, item.values...)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ShowHelp prints command line help.  It does NOT exit.  If out is nil, writes to stdout.
+func (cl *Cmdline) ShowHelp() error {
 	// Construct list of sections
 	sections := make([]*ConfigSection, 1)
 	sections[0] = &ConfigSection{
 		Description: "",
 		Order:       0,
 	}
-	for i := range configTypes {
-		ct := configTypes[i]
+	for i := range cl.configTypes {
+		ct := cl.configTypes[i]
 		if ct.section == nil || ct.hidden {
 			continue
 		}
@@ -183,81 +249,119 @@ func ShowHelp() {
 	})
 
 	progname := path.Base(os.Args[0])
-	fmt.Printf("Usage: %s [--<action> [<param>=<value> ...] ...]\n\n", progname)
-	fmt.Printf("   --help: Show this help\n\n")
-	fmt.Printf("   --config <filename>: Load additional config options from a file\n\n")
+	var err error
+	err = multiPrintf(cl.out,
+		mPI("Usage: %s [--<action> [<param>=<value> ...] ...]\n\n", progname),
+		mPI("   --help: Show this help\n\n"),
+		mPI("   --config <filename>: Load additional config options from a file\n\n"))
+	if err != nil {
+		return err
+	}
 	if runtime.GOOS != "windows" {
-		fmt.Printf("   --bash-completion: Generate a completion script for the bash shell\n")
-		fmt.Printf("         Run \". <(%s --bash-completion)\" to activate now\n\n", progname)
+		err = multiPrintf(cl.out,
+			mPI("   --bash-completion: Generate a completion script for the bash shell\n"),
+			mPI("         Run \". <(%s --bash-completion)\" to activate now\n\n", progname))
+		if err != nil {
+			return err
+		}
 	}
 	for s := range sections {
 		sect := sections[s]
 		if sect.Description != "" {
-			fmt.Printf("%s\n\n", sect.Description)
+			_, err = fmt.Fprintf(cl.out, "%s\n\n", sect.Description)
+			if err != nil {
+				return err
+			}
 		}
 		for i := 0; i <= 1; i++ {
-			for j := range configTypes {
-				ct := configTypes[j]
+			for j := range cl.configTypes {
+				ct := cl.configTypes[j]
 				if (s == 0 && ct.section != nil) || (s != 0 && ct.section != sect) || ct.hidden {
 					continue
 				}
 				if (i == 0 && ct.required) || (i == 1 && !ct.required) {
-					printCmdHelp(ct)
+					err = cl.printCmdHelp(ct)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
+	return nil
 }
 
-func bashCompletion() {
+// BashCompletion outputs a Bash script for command-line completion of the current cmdline configuration.
+func (cl *Cmdline) BashCompletion() error {
+	var err error
 	cmdName := filepath.Base(os.Args[0])
-	fmt.Printf("_%s()\n", cmdName)
-	fmt.Printf("{\n")
-	fmt.Printf("  local cur prevdashed count DASHCMDS\n")
-	fmt.Printf("  cur=${COMP_WORDS[COMP_CWORD]}\n")
-	fmt.Printf("  count=$((COMP_CWORD-1))\n")
-	fmt.Printf("  while [[ $count > 1 && ! ${COMP_WORDS[$count]} == --* ]]; do\n")
-	fmt.Printf("    count=$((count-1))\n")
-	fmt.Printf("  done\n")
-	fmt.Printf("  prevdashed=${COMP_WORDS[$count]}\n")
+	err = multiPrintf(cl.out,
+		mPI("_%s()\n", cmdName),
+		mPI("{\n"),
+		mPI("  local cur prevdashed count DASHCMDS\n"),
+		mPI("  cur=${COMP_WORDS[COMP_CWORD]}\n"),
+		mPI("  count=$((COMP_CWORD-1))\n"),
+		mPI("  while [[ $count > 1 && ! ${COMP_WORDS[$count]} == --* ]]; do\n"),
+		mPI("    count=$((count-1))\n"),
+		mPI("  done\n"),
+		mPI("  prevdashed=${COMP_WORDS[$count]}\n"))
+	if err != nil {
+		return err
+	}
 	actions := make([]string, 0)
 	actions = append(actions, "--help")
 	actions = append(actions, "--bash-completion")
 	actions = append(actions, "--config")
 	actions = append(actions, "-c")
-	for i := range configTypes {
-		ct := configTypes[i]
+	for i := range cl.configTypes {
+		ct := cl.configTypes[i]
 		actions = append(actions, fmt.Sprintf("--%s", strings.ToLower(ct.name)))
 	}
-	fmt.Printf("  DASHCMDS=\"%s\"\n", strings.Join(actions, " "))
-	fmt.Printf("  if [[ $cur == -* ]]; then\n")
-	fmt.Printf("    COMPREPLY=($(compgen -W \"$DASHCMDS\" -- ${cur}))\n")
-	fmt.Printf("  else")
-	fmt.Printf("    case ${prevdashed} in\n")
-	fmt.Printf("      -c|--config)\n")
-	fmt.Printf("        COMPREPLY=($(compgen -f -- ${cur}))\n")
-	fmt.Printf("        ;;\n")
-	for i := range configTypes {
-		ct := configTypes[i]
+	err = multiPrintf(cl.out,
+		mPI("  DASHCMDS=\"%s\"\n", strings.Join(actions, " ")),
+		mPI("  if [[ $cur == -* ]]; then\n"),
+		mPI("    COMPREPLY=($(compgen -W \"$DASHCMDS\" -- ${cur}))\n"),
+		mPI("  else"),
+		mPI("    case ${prevdashed} in\n"),
+		mPI("      -c|--config)\n"),
+		mPI("        COMPREPLY=($(compgen -f -- ${cur}))\n"),
+		mPI("        ;;\n"))
+	if err != nil {
+		return err
+	}
+	for i := range cl.configTypes {
+		ct := cl.configTypes[i]
 		if ct.hidden {
 			continue
 		}
-		fmt.Printf("      --%s)\n", strings.ToLower(ct.name))
+		_, err = fmt.Fprintf(cl.out, "      --%s)\n", strings.ToLower(ct.name))
+		if err != nil {
+			return err
+		}
 		params := make([]string, 0)
 		for ctf := range enumerateFields(ct.objType) {
 			params = append(params, fmt.Sprintf("%s=", strings.ToLower(ctf.Name)))
 		}
-		fmt.Printf("        COMPREPLY=($(compgen -W \"%s\" -- ${cur}))\n", strings.Join(params, " "))
-		fmt.Printf("        ;;\n")
+		err = multiPrintf(cl.out,
+			mPI("        COMPREPLY=($(compgen -W \"%s\" -- ${cur}))\n", strings.Join(params, " ")),
+			mPI("        ;;\n"))
+		if err != nil {
+			return err
+		}
 	}
-	fmt.Printf("      *)\n")
-	fmt.Printf("        COMPREPLY=($(compgen -W \"$DASHCMDS\" -- ${cur}))\n")
-	fmt.Printf("        ;;\n")
-	fmt.Printf("    esac\n")
-	fmt.Printf("  fi\n")
-	fmt.Printf("  [[ $COMPREPLY == *= ]] && compopt -o nospace\n")
-	fmt.Printf("}\n")
-	fmt.Printf("complete -F _%s %s\n", cmdName, cmdName)
+	err = multiPrintf(cl.out,
+		mPI("      *)\n"),
+		mPI("        COMPREPLY=($(compgen -W \"$DASHCMDS\" -- ${cur}))\n"),
+		mPI("        ;;\n"),
+		mPI("    esac\n"),
+		mPI("  fi\n"),
+		mPI("  [[ $COMPREPLY == *= ]] && compopt -o nospace\n"),
+		mPI("}\n"),
+		mPI("complete -F _%s %s\n", cmdName, cmdName))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func setValue(field *reflect.Value, value interface{}) error {
@@ -395,21 +499,20 @@ func betterParseBool(s string) (bool, error) {
 	return false, fmt.Errorf("could not parse %s as boolean", s)
 }
 
-func convTagToBool(tag string, def bool) bool {
+func convTagToBool(tag string, def bool) (bool, error) {
 	if tag == "" {
-		return def
+		return def, nil
 	}
 	b, err := betterParseBool(tag)
 	if err != nil {
-		fmt.Printf("Could not parse %s as boolean\n", tag)
-		os.Exit(1)
+		return def, fmt.Errorf("could not parse %s as boolean: %s", tag, err)
 	}
-	return b
+	return b, nil
 }
 
-func getCfgObjType(objType string) (*ConfigType, error) {
-	for i := range configTypes {
-		ct := configTypes[i]
+func (cl *Cmdline) getCfgObjType(objType string) (*ConfigType, error) {
+	for i := range cl.configTypes {
+		ct := cl.configTypes[i]
 		if objType == strings.ToLower(ct.name) {
 			return ct, nil
 		}
@@ -419,7 +522,11 @@ func getCfgObjType(objType string) (*ConfigType, error) {
 
 func getBareParam(commandType reflect.Type) (string, error) {
 	for ctf := range enumerateFields(commandType) {
-		if convTagToBool(ctf.Tag.Get("barevalue"), false) {
+		b, err := convTagToBool(ctf.Tag.Get("barevalue"), false)
+		if err != nil {
+			return "", err
+		}
+		if b {
 			return ctf.Name, nil
 		}
 	}
@@ -437,26 +544,31 @@ func getFieldByName(obj *reflect.Value, fieldName string) (*reflect.Value, error
 	return nil, fmt.Errorf("unknown field name %s", fieldName)
 }
 
-func buildRequiredParams(commandType reflect.Type) map[string]bool {
+func buildRequiredParams(commandType reflect.Type) (map[string]bool, error) {
 	requiredParams := make(map[string]bool)
 	for ctf := range enumerateFields(commandType) {
-		if convTagToBool(ctf.Tag.Get("required"), false) {
+		req, err := convTagToBool(ctf.Tag.Get("required"), false)
+		if err != nil {
+			return nil, err
+		}
+		if req {
 			requiredParams[strings.ToLower(ctf.Name)] = true
 		}
 	}
-	return requiredParams
+	return requiredParams, nil
 }
 
-func checkRequiredParams(requiredParams map[string]bool, commandName string) {
+func checkRequiredParams(requiredParams map[string]bool, commandName string) error {
 	if len(requiredParams) > 0 {
 		sl := make([]string, 0, len(requiredParams))
 		for p := range requiredParams {
 			sl = append(sl, p)
 		}
-		fmt.Printf("Required parameter%s missing for %s: %s\n", plural(len(requiredParams), "", "s"),
+		return fmt.Errorf("required parameter%s missing for %s: %s",
+			plural(len(requiredParams), "", "s"),
 			commandName, strings.Join(sl, ", "))
-		os.Exit(1)
 	}
+	return nil
 }
 
 type cfgObjInfo struct {
@@ -473,7 +585,7 @@ func newCOI() *cfgObjInfo {
 	}
 }
 
-func loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
+func (cl *Cmdline) loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, err
@@ -513,7 +625,7 @@ func loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
 				return nil, fmt.Errorf("unknown config file format")
 			}
 		}
-		ct, err := getCfgObjType(command)
+		ct, err := cl.getCfgObjType(command)
 		if err != nil {
 			return nil, fmt.Errorf("could not get config type for command %s: %s", command, err)
 		}
@@ -554,7 +666,10 @@ func loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
 		coi := newCOI()
 		coi.obj = reflect.New(ct.objType).Elem()
 		coi.arg = command
-		requiredParams := buildRequiredParams(ct.objType)
+		requiredParams, err := buildRequiredParams(ct.objType)
+		if err != nil {
+			return nil, err
+		}
 		for k, v := range params {
 			f, err := getFieldByName(&coi.obj, k)
 			if err != nil {
@@ -580,16 +695,17 @@ func loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
 // names that will be called on each config objects.  If some objects need to be configured before others, use
 // multiple phases.  Each phase is run against all objects before moving to the next phase.  The return value is
 // the name of the exclusive object that was run, if any, or an empty string if the normal, non-exclusive command ran.
-func ParseAndRun(args []string, phases []string) string {
+func (cl *Cmdline) ParseAndRun(args []string, phases []string) (string, error) {
 	var accumulator *cfgObjInfo
 	var commandType reflect.Type
 	var requiredParams map[string]bool
+	var err error
 	requiredObjs := make(map[string]bool)
 	activeObjs := make([]*cfgObjInfo, 0)
 	configCmd := false
 
-	for i := range configTypes {
-		ct := configTypes[i]
+	for i := range cl.configTypes {
+		ct := cl.configTypes[i]
 		if ct.required {
 			requiredObjs[ct.objType.Name()] = true
 		}
@@ -598,12 +714,18 @@ func ParseAndRun(args []string, phases []string) string {
 	for i := range args {
 		arg := args[i]
 		lcarg := strings.ToLower(arg)
-		if lcarg == "-h" || lcarg == "--help" {
-			ShowHelp()
-			os.Exit(0)
-		} else if lcarg == "--bash-completion" {
-			bashCompletion()
-			os.Exit(0)
+		if lcarg == "-h" || lcarg == "--help" && cl.out != nil {
+			err = cl.ShowHelp()
+			if err != nil {
+				return "", err
+			}
+			return "", nil
+		} else if lcarg == "--bash-completion" && cl.out != nil {
+			err = cl.BashCompletion()
+			if err != nil {
+				return "", err
+			}
+			return "", nil
 		} else if lcarg[0] == '-' {
 			// This is a param with dashes, which starts a new action
 			for lcarg[0] == '-' {
@@ -611,7 +733,10 @@ func ParseAndRun(args []string, phases []string) string {
 			}
 			// If we were accumulating an action, store it (it is now complete)
 			if commandType != nil && accumulator != nil {
-				checkRequiredParams(requiredParams, accumulator.arg)
+				err = checkRequiredParams(requiredParams, accumulator.arg)
+				if err != nil {
+					return "", err
+				}
 				activeObjs = append(activeObjs, accumulator)
 				accumulator = nil
 			}
@@ -619,17 +744,16 @@ func ParseAndRun(args []string, phases []string) string {
 				configCmd = true
 			} else {
 				// Search for the command in our known config types, and start a new accumulator
-				ct, err := getCfgObjType(lcarg)
+				var ct *ConfigType
+				ct, err = cl.getCfgObjType(lcarg)
 				if err != nil {
-					fmt.Printf("Command error: %s\n", err)
-					os.Exit(1)
+					return "", fmt.Errorf("command error: %s", err)
 				}
 				commandType = ct.objType
 				if ct.singleton {
 					for c := range activeObjs {
 						if activeObjs[c].obj.Type() == ct.objType {
-							fmt.Printf("The \"%s\" directive is only allowed once.\n", ct.name)
-							os.Exit(1)
+							return "", fmt.Errorf("directive \"%s\" is only allowed once", ct.name)
 						}
 					}
 				}
@@ -637,64 +761,62 @@ func ParseAndRun(args []string, phases []string) string {
 				accumulator.obj = reflect.New(commandType).Elem()
 				accumulator.arg = arg
 				delete(requiredObjs, ct.objType.Name())
-				requiredParams = buildRequiredParams(ct.objType)
+				requiredParams, err = buildRequiredParams(ct.objType)
+				if err != nil {
+					return "", err
+				}
 			}
 		} else {
 			// This arg did not start with a dash, so it is a parameter to the current accumulation
 			if configCmd {
 				configCmd = false
-				newObjs, err := loadConfigFromFile(arg)
+				var newObjs []*cfgObjInfo
+				newObjs, err = cl.loadConfigFromFile(arg)
 				if err != nil {
-					fmt.Printf("Error loading config file: %s\n", err)
-					os.Exit(1)
+					return "", fmt.Errorf("error loading config file: %s", err)
 				}
-				for i := range newObjs {
-					coi := newObjs[i]
+				for j := range newObjs {
+					coi := newObjs[j]
 					delete(requiredObjs, coi.obj.Type().Name())
 					activeObjs = append(activeObjs, coi)
 				}
 				continue
 			}
 			if commandType == nil || accumulator == nil {
-				fmt.Printf("Parameter specified before command\n")
-				os.Exit(1)
+				return "", fmt.Errorf("parameter specified before command")
 			}
 			sarg := strings.SplitN(arg, "=", 2)
 			if len(sarg) == 1 {
 				// This is a barevalue (not in the form x=y), so look for a barevalue-accepting parameter
-				bp, err := getBareParam(commandType)
+				var bp string
+				bp, err = getBareParam(commandType)
 				if err != nil {
-					fmt.Printf("Config error: %s\n", err)
-					os.Exit(1)
+					return "", fmt.Errorf("config error: %s", err)
 				}
 				f := accumulator.obj.FieldByName(bp)
 				if !f.CanSet() {
-					fmt.Printf("Internal error: field %s is not settable\n", bp)
-					os.Exit(1)
+					return "", fmt.Errorf("internal error: field %s is not settable", bp)
 				}
 				err = setValue(&f, sarg[0])
 				if err != nil {
-					fmt.Printf("Error setting config value for field %s: %s\n", bp, err)
-					os.Exit(1)
+					return "", fmt.Errorf("error setting config value for field %s: %s", bp, err)
 				}
 				accumulator.fieldsSet = append(accumulator.fieldsSet, bp)
 				delete(requiredParams, strings.ToLower(bp))
 			} else if len(sarg) == 2 {
 				// This is a key/value pair, so look for a parameter matching the key
 				lcname := strings.ToLower(sarg[0])
-				f, err := getFieldByName(&accumulator.obj, lcname)
+				var f *reflect.Value
+				f, err = getFieldByName(&accumulator.obj, lcname)
 				if err != nil {
-					fmt.Printf("Config error: %s\n", err)
-					os.Exit(1)
+					return "", fmt.Errorf("config error: %s", err)
 				}
 				if !f.CanSet() {
-					fmt.Printf("Internal error: field %s is not settable\n", lcname)
-					os.Exit(1)
+					return "", fmt.Errorf("internal error: field %s is not settable", lcname)
 				}
 				err = setValue(f, sarg[1])
 				if err != nil {
-					fmt.Printf("Error setting config value for field %s: %s\n", lcname, err)
-					os.Exit(1)
+					return "", fmt.Errorf("error setting config value for field %s: %s", lcname, err)
 				}
 				accumulator.fieldsSet = append(accumulator.fieldsSet, lcname)
 				delete(requiredParams, lcname)
@@ -703,7 +825,10 @@ func ParseAndRun(args []string, phases []string) string {
 	}
 	if commandType != nil && accumulator != nil {
 		// If we were accumulating an object, store it now since we're done
-		checkRequiredParams(requiredParams, accumulator.arg)
+		err = checkRequiredParams(requiredParams, accumulator.arg)
+		if err != nil {
+			return "", err
+		}
 		activeObjs = append(activeObjs, accumulator)
 	}
 
@@ -713,8 +838,8 @@ func ParseAndRun(args []string, phases []string) string {
 	for i := range activeObjs {
 		ao := activeObjs[i]
 		found := false
-		for j := range configTypes {
-			ct := configTypes[j]
+		for j := range cl.configTypes {
+			ct := cl.configTypes[j]
 			if ao.obj.Type() == ct.objType {
 				if ct.exclusive {
 					haveExclusive = true
@@ -725,22 +850,20 @@ func ParseAndRun(args []string, phases []string) string {
 			}
 		}
 		if !found {
-			fmt.Printf("Internal error: type not found.\n")
-			os.Exit(1)
+			return "", fmt.Errorf("internal error: type %s not found", ao.obj.Type().String())
 		}
 		if haveExclusive {
 			break
 		}
 	}
 	if haveExclusive && len(activeObjs) > 1 {
-		fmt.Printf("Cannot specify any other options with %s.\n", exclusiveName)
-		os.Exit(1)
+		return "", fmt.Errorf("cannot specify any other options with %s", exclusiveName)
 	}
 
 	// Add missing required singletons
 	if !haveExclusive {
-		for i := range configTypes {
-			ct := configTypes[i]
+		for i := range cl.configTypes {
+			ct := cl.configTypes[i]
 			if ct.singleton && ct.required {
 				haveThis := false
 				for j := range activeObjs {
@@ -754,7 +877,15 @@ func ParseAndRun(args []string, phases []string) string {
 					a := newCOI()
 					a.obj = reflect.New(ct.objType).Elem()
 					a.arg = fmt.Sprintf("implicit %s", ct.name)
-					checkRequiredParams(buildRequiredParams(ct.objType), a.arg)
+					var reqs map[string]bool
+					reqs, err = buildRequiredParams(ct.objType)
+					if err != nil {
+						return "", err
+					}
+					err = checkRequiredParams(reqs, a.arg)
+					if err != nil {
+						return "", err
+					}
 					activeObjs = append(activeObjs, a)
 					delete(requiredObjs, ct.objType.Name())
 				}
@@ -766,20 +897,17 @@ func ParseAndRun(args []string, phases []string) string {
 	if len(requiredObjs) > 0 && !haveExclusive {
 		sl := make([]string, 0, len(requiredObjs))
 		for p := range requiredObjs {
-			for i := range configTypes {
-				ct := configTypes[i]
+			for i := range cl.configTypes {
+				ct := cl.configTypes[i]
 				if ct.objType.Name() == p {
 					sl = append(sl, ct.name)
 					break
 				}
 			}
 		}
-		fmt.Printf("%s required for: %s\n", plural(len(requiredObjs), "A value is", "Values are"),
+		return "", fmt.Errorf("%s required for: %s",
+			plural(len(requiredObjs), "a value is", "values are"),
 			strings.Join(sl, ", "))
-		if len(args) == 0 {
-			fmt.Printf("Run %s --help for command line instructions.\n", os.Args[0])
-		}
-		os.Exit(1)
 	}
 
 	// Set default values where required
@@ -802,10 +930,9 @@ func ParseAndRun(args []string, phases []string) string {
 			if !hasBeenSet {
 				s := cfgObj.obj.FieldByName(ctf.Name)
 				if s.CanSet() {
-					err := setValue(&s, defaultValue)
+					err = setValue(&s, defaultValue)
 					if err != nil {
-						fmt.Printf("Error setting default value for field %s: %s\n", ctf.Name, err)
-						os.Exit(1)
+						return "", fmt.Errorf("error setting default value for field %s: %s", ctf.Name, err)
 					}
 				}
 			}
@@ -813,25 +940,28 @@ func ParseAndRun(args []string, phases []string) string {
 	}
 
 	// Run a given named method on all the registered objects
-	runMethod := func(methodName string) {
+	runMethod := func(methodName string) error {
 		for i := range activeObjs {
 			cfgObj := activeObjs[i]
 			m := cfgObj.obj.MethodByName(methodName)
 			if m.IsValid() {
 				result := m.Call(make([]reflect.Value, 0))
-				err := result[0].Interface()
-				if err != nil {
-					fmt.Printf("Error: %s\n", err)
-					os.Exit(1)
+				errIf := result[0].Interface()
+				if errIf != nil {
+					return fmt.Errorf("%s", errIf)
 				}
 			}
 		}
+		return nil
 	}
 
 	// Run phases
-	for i := range phases {
-		runMethod(phases[i])
+	for _, phase := range phases {
+		err = runMethod(phase)
+		if err != nil {
+			return "", fmt.Errorf("error during %s phase: %s", phase, err)
+		}
 	}
 
-	return exclusiveName
+	return exclusiveName, nil
 }
