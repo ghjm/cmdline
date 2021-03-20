@@ -59,7 +59,7 @@ Once all our CLI parameter objects are registered, the main function
 of the library is invoked:
 
 ```
-_, err := cl.ParseAndRun(os.Args[1:], []string{"Check", "Draw"}, cmdline.ShowHelpIfNoArgs)
+err := cl.ParseAndRun(os.Args[1:], []string{"Check", "Draw"}, cmdline.ShowHelpIfNoArgs)
 ```
 
 This parses the command-line arguments, and then runs two execution

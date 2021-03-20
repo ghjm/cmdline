@@ -45,7 +45,7 @@ func main() {
 	cl := cmdline.NewCmdline()
 	cl.AddConfigType("circle", "Circle Shape", circle{})
 	cl.AddConfigType("rectangle", "Rectangle Shape", rectangle{})
-	_, err := cl.ParseAndRun(os.Args[1:], []string{"Check", "Draw"}, cmdline.ShowHelpIfNoArgs)
+	err := cl.ParseAndRun(os.Args[1:], []string{"Check", "Draw"}, cmdline.ShowHelpIfNoArgs)
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)

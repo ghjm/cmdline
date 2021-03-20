@@ -65,6 +65,7 @@ func Section(section *ConfigSection) func(param *ConfigType) {
 type Cmdline struct {
 	configTypes []*ConfigType
 	out         io.Writer
+	whatRan     string
 }
 
 // NewCmdline constructs a new cmdline object
@@ -78,6 +79,11 @@ func NewCmdline() *Cmdline {
 // SetOutput configures where the output of a Cmdline instance will go
 func (cl *Cmdline) SetOutput(out io.Writer) {
 	cl.out = out
+}
+
+// WhatRan returns the name of an exclusive command, if any, that ran on the last invocation of ParseAndRun
+func (cl *Cmdline) WhatRan() string {
+	return cl.whatRan
 }
 
 var globalCmdline *Cmdline
@@ -723,7 +729,7 @@ func ShowHelpIfNoArgs(pro *parseAndRunOptions) {
 // names that will be called on each config objects.  If some objects need to be configured before others, use
 // multiple phases.  Each phase is run against all objects before moving to the next phase.  The return value is
 // the name of the exclusive object that was run, if any, or an empty string if the normal, non-exclusive command ran.
-func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*parseAndRunOptions)) (string, error) {
+func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*parseAndRunOptions)) error {
 
 	pro := parseAndRunOptions{}
 	for _, proFunc := range options {
@@ -731,7 +737,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 	}
 
 	if len(args) == 0 && pro.helpIfNoArgs {
-		return "", cl.ShowHelp()
+		return cl.ShowHelp()
 	}
 
 	var accumulator *cfgObjInfo
@@ -756,15 +762,15 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 		if lcarg == "-h" || lcarg == "--help" && cl.out != nil {
 			err = cl.ShowHelp()
 			if err != nil {
-				return "", err
+				return err
 			}
-			return "", nil
+			return nil
 		} else if lcarg == "--bash-completion" && cl.out != nil {
 			err = cl.BashCompletion()
 			if err != nil {
-				return "", err
+				return err
 			}
-			return "", nil
+			return nil
 		} else if lcarg[0] == '-' {
 			// This is a param with dashes, which starts a new action
 			for lcarg[0] == '-' {
@@ -774,7 +780,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 			if commandType != nil && accumulator != nil {
 				err = checkRequiredParams(requiredParams, accumulator.arg)
 				if err != nil {
-					return "", err
+					return err
 				}
 				activeObjs = append(activeObjs, accumulator)
 				accumulator = nil
@@ -786,13 +792,13 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				var ct *ConfigType
 				ct, err = cl.getCfgObjType(lcarg)
 				if err != nil {
-					return "", fmt.Errorf("command error: %s", err)
+					return fmt.Errorf("command error: %s", err)
 				}
 				commandType = ct.objType
 				if ct.singleton {
 					for c := range activeObjs {
 						if activeObjs[c].obj.Type() == ct.objType {
-							return "", fmt.Errorf("directive \"%s\" is only allowed once", ct.name)
+							return fmt.Errorf("directive \"%s\" is only allowed once", ct.name)
 						}
 					}
 				}
@@ -802,7 +808,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				delete(requiredObjs, ct.objType.Name())
 				requiredParams, err = buildRequiredParams(ct.objType)
 				if err != nil {
-					return "", err
+					return err
 				}
 			}
 		} else {
@@ -812,7 +818,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				var newObjs []*cfgObjInfo
 				newObjs, err = cl.loadConfigFromFile(arg)
 				if err != nil {
-					return "", fmt.Errorf("error loading config file: %s", err)
+					return fmt.Errorf("error loading config file: %s", err)
 				}
 				for j := range newObjs {
 					coi := newObjs[j]
@@ -822,7 +828,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				continue
 			}
 			if commandType == nil || accumulator == nil {
-				return "", fmt.Errorf("parameter specified before command")
+				return fmt.Errorf("parameter specified before command")
 			}
 			sarg := strings.SplitN(arg, "=", 2)
 			if len(sarg) == 1 {
@@ -830,15 +836,15 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				var bp string
 				bp, err = getBareParam(commandType)
 				if err != nil {
-					return "", fmt.Errorf("config error: %s", err)
+					return fmt.Errorf("config error: %s", err)
 				}
 				f := accumulator.obj.FieldByName(bp)
 				if !f.CanSet() {
-					return "", fmt.Errorf("internal error: field %s is not settable", bp)
+					return fmt.Errorf("internal error: field %s is not settable", bp)
 				}
 				err = setValue(&f, sarg[0])
 				if err != nil {
-					return "", fmt.Errorf("error setting config value for field %s: %s", bp, err)
+					return fmt.Errorf("error setting config value for field %s: %s", bp, err)
 				}
 				accumulator.fieldsSet = append(accumulator.fieldsSet, bp)
 				delete(requiredParams, strings.ToLower(bp))
@@ -848,14 +854,14 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				var f *reflect.Value
 				f, err = getFieldByName(&accumulator.obj, lcname)
 				if err != nil {
-					return "", fmt.Errorf("config error: %s", err)
+					return fmt.Errorf("config error: %s", err)
 				}
 				if !f.CanSet() {
-					return "", fmt.Errorf("internal error: field %s is not settable", lcname)
+					return fmt.Errorf("internal error: field %s is not settable", lcname)
 				}
 				err = setValue(f, sarg[1])
 				if err != nil {
-					return "", fmt.Errorf("error setting config value for field %s: %s", lcname, err)
+					return fmt.Errorf("error setting config value for field %s: %s", lcname, err)
 				}
 				accumulator.fieldsSet = append(accumulator.fieldsSet, lcname)
 				delete(requiredParams, lcname)
@@ -866,7 +872,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 		// If we were accumulating an object, store it now since we're done
 		err = checkRequiredParams(requiredParams, accumulator.arg)
 		if err != nil {
-			return "", err
+			return err
 		}
 		activeObjs = append(activeObjs, accumulator)
 	}
@@ -889,14 +895,14 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 			}
 		}
 		if !found {
-			return "", fmt.Errorf("internal error: type %s not found", ao.obj.Type().String())
+			return fmt.Errorf("internal error: type %s not found", ao.obj.Type().String())
 		}
 		if haveExclusive {
 			break
 		}
 	}
 	if haveExclusive && len(activeObjs) > 1 {
-		return "", fmt.Errorf("cannot specify any other options with %s", exclusiveName)
+		return fmt.Errorf("cannot specify any other options with %s", exclusiveName)
 	}
 
 	// Add missing required singletons
@@ -919,11 +925,11 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 					var reqs map[string]bool
 					reqs, err = buildRequiredParams(ct.objType)
 					if err != nil {
-						return "", err
+						return err
 					}
 					err = checkRequiredParams(reqs, a.arg)
 					if err != nil {
-						return "", err
+						return err
 					}
 					activeObjs = append(activeObjs, a)
 					delete(requiredObjs, ct.objType.Name())
@@ -944,7 +950,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				}
 			}
 		}
-		return "", fmt.Errorf("%s required for: %s",
+		return fmt.Errorf("%s required for: %s",
 			plural(len(requiredObjs), "a value is", "values are"),
 			strings.Join(sl, ", "))
 	}
@@ -971,7 +977,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				if s.CanSet() {
 					err = setValue(&s, defaultValue)
 					if err != nil {
-						return "", fmt.Errorf("error setting default value for field %s: %s", ctf.Name, err)
+						return fmt.Errorf("error setting default value for field %s: %s", ctf.Name, err)
 					}
 				}
 			}
@@ -998,9 +1004,10 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 	for _, phase := range phases {
 		err = runMethod(phase)
 		if err != nil {
-			return "", fmt.Errorf("error during %s phase: %s", phase, err)
+			return fmt.Errorf("error during %s phase: %s", phase, err)
 		}
 	}
 
-	return exclusiveName, nil
+	cl.whatRan = exclusiveName
+	return nil
 }
