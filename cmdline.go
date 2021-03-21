@@ -447,6 +447,19 @@ func setValue(field *reflect.Value, value interface{}) error {
 		return nil
 	}
 
+	// If the field is a slice, check if we were given a JSON-encoded string
+	if fieldKind == reflect.Slice && valueKind == reflect.String && isString && strings.HasPrefix(valueStr, "[") {
+		valueType = reflect.SliceOf(fieldType.Elem())
+		valueKind = valueType.Kind()
+		dest := reflect.MakeSlice(valueType, 0, 0)
+		value = dest.Interface()
+		err := json.Unmarshal([]byte(valueStr), &value)
+		if err != nil {
+			return err
+		}
+		// We do not return here because we still need the slice copy below
+	}
+
 	// If the field and value are a slice type, attempt to copy the values
 	if fieldKind == reflect.Slice && valueKind == reflect.Slice {
 		valueSlice, ok := value.([]interface{})
@@ -697,7 +710,7 @@ func (cl *Cmdline) loadConfigFromFile(filename string) ([]*cfgObjInfo, error) {
 				return nil, fmt.Errorf("field %s not defined for command %s: %s", k, command, err)
 			}
 			if !f.CanSet() {
-				return nil, fmt.Errorf("field %s is not settable", k)
+				return nil, fmt.Errorf("field %s is  (maybe private)", k)
 			}
 			err = setValue(f, v)
 			if err != nil {
@@ -847,7 +860,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 				}
 				f := accumulator.obj.FieldByName(bp)
 				if !f.CanSet() {
-					return fmt.Errorf("internal error: field %s is not settable", bp)
+					return fmt.Errorf("field %s is not settable (maybe private)", bp)
 				}
 				err = setValue(&f, sarg[0])
 				if err != nil {
@@ -864,7 +877,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 					return fmt.Errorf("config error: %s", err)
 				}
 				if !f.CanSet() {
-					return fmt.Errorf("internal error: field %s is not settable", lcname)
+					return fmt.Errorf("field %s is not settable (maybe private)", lcname)
 				}
 				err = setValue(f, sarg[1])
 				if err != nil {
@@ -902,7 +915,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 			}
 		}
 		if !found {
-			return fmt.Errorf("internal error: type %s not found", ao.obj.Type().String())
+			return fmt.Errorf("type %s not found", ao.obj.Type().String())
 		}
 		if haveExclusive {
 			break
