@@ -142,12 +142,16 @@ func recursiveEnumerateFields(typ reflect.Type, results chan<- reflect.StructFie
 
 // enumerateFields enumerates primitive fields in a struct, including composed structs.
 // If a composed struct has the same name as a struct member, that name will be returned twice.
-func enumerateFields(typ reflect.Type) <-chan reflect.StructField {
-	results := make(chan reflect.StructField)
+func enumerateFields(typ reflect.Type) []reflect.StructField {
+	resultChan := make(chan reflect.StructField)
 	go func() {
-		recursiveEnumerateFields(typ, results)
-		close(results)
+		recursiveEnumerateFields(typ, resultChan)
+		close(resultChan)
 	}()
+	results := make([]reflect.StructField, 0)
+	for r := range resultChan {
+		results = append(results, r)
+	}
 	return results
 }
 
@@ -177,7 +181,7 @@ func (cl *Cmdline) printCmdHelp(p *ConfigType) error {
 	if err != nil {
 		return err
 	}
-	for ctf := range enumerateFields(p.objType) {
+	for _, ctf := range enumerateFields(p.objType) {
 		_, err = fmt.Fprintf(cl.out, "      %s=<%s>", strings.ToLower(ctf.Name),
 			printableTypeName(ctf.Type))
 		if err != nil {
@@ -354,7 +358,7 @@ func (cl *Cmdline) BashCompletion() error {
 			return err
 		}
 		params := make([]string, 0)
-		for ctf := range enumerateFields(ct.objType) {
+		for _, ctf := range enumerateFields(ct.objType) {
 			params = append(params, fmt.Sprintf("%s=", strings.ToLower(ctf.Name)))
 		}
 		err = multiPrintf(cl.out,
@@ -554,7 +558,7 @@ func (cl *Cmdline) getCfgObjType(objType string) (*ConfigType, error) {
 
 // getBareParam searches a struct for a member with a true barevalue tag
 func getBareParam(commandType reflect.Type) (string, error) {
-	for ctf := range enumerateFields(commandType) {
+	for _, ctf := range enumerateFields(commandType) {
 		b, err := convTagToBool(ctf.Tag.Get("barevalue"), false)
 		if err != nil {
 			return "", err
@@ -568,7 +572,7 @@ func getBareParam(commandType reflect.Type) (string, error) {
 
 // getFieldByName searches for a field by case-insensitive name and returns it if found
 func getFieldByName(obj *reflect.Value, fieldName string) (*reflect.Value, error) {
-	for ctf := range enumerateFields(obj.Type()) {
+	for _, ctf := range enumerateFields(obj.Type()) {
 		if strings.ToLower(ctf.Name) == strings.ToLower(fieldName) {
 			fobj := obj.FieldByName(ctf.Name)
 			return &fobj, nil
@@ -580,7 +584,7 @@ func getFieldByName(obj *reflect.Value, fieldName string) (*reflect.Value, error
 // buildRequiredParams returns a map whose indexes are the parameters of a struct with a true "required" tag
 func buildRequiredParams(commandType reflect.Type) (map[string]struct{}, error) {
 	requiredParams := make(map[string]struct{})
-	for ctf := range enumerateFields(commandType) {
+	for _, ctf := range enumerateFields(commandType) {
 		req, err := convTagToBool(ctf.Tag.Get("required"), false)
 		if err != nil {
 			return nil, err
@@ -987,7 +991,7 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 	// Set default values where required
 	for _, cfgObj := range activeObjs {
 		cfgType := reflect.TypeOf(cfgObj.obj.Interface())
-		for ctf := range enumerateFields(cfgType) {
+		for _, ctf := range enumerateFields(cfgType) {
 			defaultValue := ctf.Tag.Get("default")
 			if defaultValue == "" {
 				continue
