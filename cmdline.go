@@ -132,6 +132,10 @@ func printableTypeName(typ reflect.Type) string {
 func recursiveEnumerateFields(typ reflect.Type, results chan<- reflect.StructField) {
 	for i := 0; i < typ.NumField(); i++ {
 		ctf := typ.Field(i)
+		ignore, err := betterParseBool(ctf.Tag.Get("ignore"))
+		if err == nil && ignore {
+			continue
+		}
 		if ctf.Type.Kind() == reflect.Struct {
 			recursiveEnumerateFields(ctf.Type, results)
 		} else {
