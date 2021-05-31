@@ -303,3 +303,26 @@ func TestYAML(t *testing.T) {
 		t.Error("Actual results did not match expected")
 	}
 }
+
+func TestAppRegistry(t *testing.T) {
+	RegisterConfigTypeForApp("app1", "test1", "", testCfg1{})
+	RegisterConfigTypeForApp("app1", "test2", "", testCfg2{})
+	RegisterConfigTypeForApp("app2", "test3", "", testCfg3{})
+	RegisterConfigTypeForApp("app4", "test4", "", testCfg4{})
+	cl := NewCmdline()
+	cl.AddRegisteredConfigTypes("app1")
+	testResults = make([]string, 0)
+	err := cl.ParseAndRun([]string{"--test1", "ID=hello", "--test2", "Value=goodbye"}, []string{"Run"})
+	if err != nil {
+		t.Error(err)
+	}
+	if !reflect.DeepEqual(testResults, []string{
+		"testCfg1 Run hello",
+	}) {
+		t.Error("Actual results did not match expected")
+	}
+	err = cl.ParseAndRun([]string{"--test3", "ID=hello"}, []string{"Run"})
+	if err == nil {
+		t.Error("test3 should not have been registered")
+	}
+}

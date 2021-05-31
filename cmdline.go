@@ -86,18 +86,8 @@ func (cl *Cmdline) WhatRan() string {
 	return cl.whatRan
 }
 
-var globalCmdline *Cmdline
-
-// GlobalInstance returns a singleton global instance of a Cmdline
-func GlobalInstance() *Cmdline {
-	if globalCmdline == nil {
-		globalCmdline = NewCmdline()
-	}
-	return globalCmdline
-}
-
-// AddConfigType registers a new config type with the system
-func (cl *Cmdline) AddConfigType(name string, description string, configType interface{}, options ...func(*ConfigType)) {
+// makeConfigTYpe constructs a new ConfigType object, applying given modifiers
+func makeConfigType(name string, description string, configType interface{}, options ...func(*ConfigType)) *ConfigType {
 	newCT := &ConfigType{
 		name:        name,
 		description: description,
@@ -106,7 +96,33 @@ func (cl *Cmdline) AddConfigType(name string, description string, configType int
 	for _, opt := range options {
 		opt(newCT)
 	}
-	cl.configTypes = append(cl.configTypes, newCT)
+	return newCT
+}
+
+// AddConfigType registers a new config type with the system
+func (cl *Cmdline) AddConfigType(name string, description string, configType interface{}, options ...func(*ConfigType)) {
+	cl.configTypes = append(cl.configTypes, makeConfigType(name, description, configType, options...))
+}
+
+var globalAppConfigTypes map[string][]*ConfigType
+
+// RegisterConfigTypeForApp globally registers a new config type that can be used with a named application
+func RegisterConfigTypeForApp(appName string, name string, description string, configType interface{},
+	options ...func(*ConfigType)) {
+	if globalAppConfigTypes == nil {
+		globalAppConfigTypes = make(map[string][]*ConfigType)
+	}
+	appCTs, _ := globalAppConfigTypes[appName]
+	appCTs = append(appCTs, makeConfigType(name, description, configType, options...))
+	globalAppConfigTypes[appName] = appCTs
+}
+
+// AddRegisteredConfigTypes adds the registered config types for an app to the system
+func (cl *Cmdline) AddRegisteredConfigTypes(appName string) {
+	appCTs, ok := globalAppConfigTypes[appName]
+	if ok {
+		cl.configTypes = append(cl.configTypes, appCTs...)
+	}
 }
 
 // printableTypeName returns a human-readable name of a type, suitable for use in help text
