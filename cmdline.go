@@ -408,6 +408,16 @@ func setValue(field *reflect.Value, value interface{}) error {
 	fieldType := field.Type()
 	fieldKind := fieldType.Kind()
 	valueType := reflect.TypeOf(value)
+
+	// Handle the case where the value to be assigned is nil
+	if valueType == nil {
+		if fieldKind == reflect.Map || fieldKind == reflect.Slice {
+			field.Set(reflect.Zero(fieldType))
+			return nil
+		}
+		return fmt.Errorf("value cannot be nil")
+	}
+
 	valueKind := valueType.Kind()
 
 	// If the destination is a string, try some string conversions
