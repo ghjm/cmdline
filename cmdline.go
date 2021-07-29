@@ -1042,9 +1042,15 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 			m := cfgObj.obj.MethodByName(methodName)
 			if m.IsValid() {
 				result := m.Call(make([]reflect.Value, 0))
-				errIf := result[0].Interface()
-				if errIf != nil {
-					return fmt.Errorf("%s", errIf)
+				if len(result) > 0 {
+					errIf := result[0].Interface()
+					if errIf != nil {
+						err, ok := errIf.(error)
+						if ok {
+							return err
+						}
+						return fmt.Errorf("%s", errIf)
+					}
 				}
 			}
 		}
