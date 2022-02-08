@@ -839,7 +839,9 @@ func (cl *Cmdline) ParseAndRun(args []string, phases []string, options ...func(*
 			return nil
 		} else if lcarg[0] == '-' {
 			// This is a param with dashes, which starts a new action
-			for lcarg[0] == '-' {
+			if strings.HasPrefix(lcarg, "--") {
+				lcarg = lcarg[2:]
+			} else if strings.HasPrefix(lcarg, "-") {
 				lcarg = lcarg[1:]
 			}
 			// If we were accumulating an action, store it (it is now complete)
